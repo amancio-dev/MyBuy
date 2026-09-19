@@ -1,0 +1,1751 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+<meta name="theme-color" content="#030712" />
+<meta name="color-scheme" content="dark" />
+<meta name="description" content="Orçamento mensal regressivo: defina sua renda, acompanhe o saldo restante e veja o comprovante de cada compra." />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Cobalt" />
+<meta name="format-detection" content="telephone=no" />
+<title>Cobalt — orçamento do mês</title>
+
+<!-- ───────── Dependências (CDN, sem bundler) ───────── -->
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/dexie@3.2.7/dist/dexie.min.js"></script>
+<script>
+  // Defesa: se o CDN primário falhar, carrega o espelho de forma síncrona.
+  if (!window.Dexie) {
+    document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.7/dexie.min.js"><\/script>');
+  }
+</script>
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.263.1/dist/umd/lucide.min.js"></script>
+<script>
+  if (!window.lucide) {
+    document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/lucide/0.263.1/lucide.min.js"><\/script>');
+  }
+</script>
+
+<script>
+  // Design System — Deep Navy / Cobalto
+  window.tailwind = window.tailwind || {};
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        colors: {
+          nv: {
+            bg: '#030712',
+            surface: '#0b1224',
+            raised: '#0f172a',
+            cobalt: '#1d4ed8',
+            sapphire: '#2563eb',
+            active: '#3b82f6',
+            neon: '#38bdf8'
+          }
+        },
+        fontFamily: {
+          sans: ['Inter', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif']
+        },
+        boxShadow: {
+          sheet: '0 -24px 70px -12px rgba(0,0,0,.85)',
+          cobalt: '0 12px 34px -14px rgba(37,99,235,.75)'
+        }
+      }
+    }
+  };
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+<style>
+  /* ── Tokens: identidade dark por marca, estável em qualquer tema do leitor ── */
+  :root {
+    --nv-bg: #030712;
+    --nv-surface: #0b1224;
+    --nv-raised: #0f172a;
+    --nv-cobalt: #1d4ed8;
+    --nv-sapphire: #2563eb;
+    --nv-neon: #38bdf8;
+    --nv-text: #e2e8f0;
+    --nv-muted: #94a3b8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --nv-bg: #030712; --nv-surface: #0b1224; --nv-raised: #0f172a;
+      --nv-cobalt: #1d4ed8; --nv-sapphire: #2563eb; --nv-neon: #38bdf8;
+      --nv-text: #e2e8f0; --nv-muted: #94a3b8;
+    }
+  }
+  :root[data-theme="dark"] {
+    --nv-bg: #030712; --nv-surface: #0b1224; --nv-raised: #0f172a;
+    --nv-cobalt: #1d4ed8; --nv-sapphire: #2563eb; --nv-neon: #38bdf8;
+    --nv-text: #e2e8f0; --nv-muted: #94a3b8;
+  }
+
+  html, body { background: var(--nv-bg); color: var(--nv-text); }
+  body {
+    min-height: 100dvh;
+    font-family: Inter, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: none;
+  }
+
+  /* Safe areas (iOS/Android) */
+  .pt-safe { padding-top: env(safe-area-inset-top, 0px); }
+  .nav-safe { padding-bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px)); }
+  .sheet-safe { padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px)); }
+  .scroll-safe { padding-bottom: calc(7.5rem + env(safe-area-inset-bottom, 0px)); }
+
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+
+  .snap-row { scroll-snap-type: x mandatory; }
+  .snap-row > * { scroll-snap-align: start; }
+
+  /* Bottom sheets */
+  .sheet-backdrop { opacity: 0; pointer-events: none; transition: opacity .28s ease; }
+  .sheet-backdrop.is-open { opacity: 1; pointer-events: auto; }
+  .sheet-panel { transform: translateY(100%); transition: transform .34s cubic-bezier(.22,1,.36,1); }
+  .sheet-panel.is-open { transform: translateY(0); }
+
+  .toast-enter { animation: toastIn .26s cubic-bezier(.22,1,.36,1) both; }
+  @keyframes toastIn { from { opacity: 0; transform: translateY(-14px) scale(.97); } to { opacity: 1; transform: none; } }
+
+  .skeleton { position: relative; overflow: hidden; background: #0f172a; }
+  .skeleton::after {
+    content: ''; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(56,189,248,.09), transparent);
+    animation: shimmer 1.3s infinite;
+  }
+  @keyframes shimmer { 100% { transform: translateX(100%); } }
+
+  /* Barra de progresso do orçamento */
+  .budget-track { background: rgba(148,163,184,.14); }
+  .budget-fill { transition: width .5s cubic-bezier(.22,1,.36,1); }
+
+  /* Recorte de comprovante */
+  .receipt-notch {
+    background-image: radial-gradient(circle at 6px 50%, var(--nv-bg) 6px, transparent 6.5px);
+    background-size: 18px 100%;
+  }
+
+  :focus-visible { outline: 2px solid var(--nv-neon); outline-offset: 2px; border-radius: 12px; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::after { animation: none !important; transition-duration: .01ms !important; }
+  }
+
+  input, select, textarea { font-size: 16px; }
+  select { -webkit-appearance: none; appearance: none; }
+</style>
+</head>
+
+<body class="bg-nv-bg text-slate-100">
+
+<div id="app" class="mx-auto flex min-h-[100dvh] w-full max-w-md flex-col bg-nv-bg">
+
+  <!-- ══════════════ VIEW: INÍCIO ══════════════ -->
+  <section id="view-home" data-view="home" class="flex-1">
+    <header class="pt-safe px-5">
+      <div class="flex items-center justify-between pt-5">
+        <div class="flex items-center gap-3">
+          <div id="avatar" class="flex h-11 w-11 items-center justify-center rounded-full bg-gradient-to-br from-nv-cobalt to-nv-sapphire text-base font-semibold text-white shadow-cobalt">A</div>
+          <div>
+            <p id="greeting" class="text-sm text-slate-400">Olá,</p>
+            <p id="owner-name" class="text-base font-semibold text-slate-100">André</p>
+          </div>
+        </div>
+        <div class="flex items-center gap-1">
+          <button data-action="toggle-balance" aria-label="Mostrar ou ocultar valores"
+                  class="flex h-10 w-10 items-center justify-center rounded-full text-slate-300 transition hover:bg-blue-500/10 active:scale-95">
+            <i id="visibility-icon" data-lucide="eye" class="h-5 w-5"></i>
+          </button>
+          <button data-action="nav" data-route="settings" aria-label="Abrir configurações"
+                  class="flex h-10 w-10 items-center justify-center rounded-full text-slate-300 transition hover:bg-blue-500/10 active:scale-95">
+            <i data-lucide="settings" class="h-5 w-5"></i>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="scroll-safe px-5 pt-6">
+      <div id="hero-card"></div>
+
+      <div id="month-summary" class="mt-4 grid grid-cols-2 gap-3"></div>
+
+      <div class="mt-6 flex items-center justify-between">
+        <h2 class="text-sm font-semibold text-slate-300">Últimas movimentações</h2>
+        <button data-action="nav" data-route="statement"
+                class="flex items-center gap-1 rounded-full px-2 py-1 text-xs font-medium text-nv-neon transition hover:bg-blue-500/10">
+          Ver extrato <i data-lucide="chevron-right" class="h-3.5 w-3.5"></i>
+        </button>
+      </div>
+      <ul id="home-recent" class="mt-3 space-y-2"></ul>
+    </main>
+  </section>
+
+  <!-- ══════════════ VIEW: EXTRATO ══════════════ -->
+  <section id="view-statement" data-view="statement" class="hidden flex-1">
+    <div class="sticky top-0 z-20 border-b border-blue-500/15 bg-nv-bg/95 backdrop-blur">
+      <div class="pt-safe px-5">
+        <div class="flex items-center justify-between pt-5">
+          <h1 class="text-xl font-semibold tracking-tight">Extrato</h1>
+          <span id="statement-count" class="text-xs text-slate-500"></span>
+        </div>
+
+        <div class="relative mt-4">
+          <i data-lucide="search" class="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500"></i>
+          <input id="search-input" type="search" inputmode="search" autocomplete="off" placeholder="Buscar por descrição ou categoria"
+                 aria-label="Buscar no extrato"
+                 class="w-full rounded-2xl border border-blue-500/15 bg-nv-surface py-3 pl-11 pr-11 text-sm text-slate-100 placeholder:text-slate-500 focus:border-nv-active focus:outline-none" />
+          <button data-action="clear-search" aria-label="Limpar busca"
+                  class="absolute right-3 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-slate-500 transition hover:bg-blue-500/10">
+            <i data-lucide="x" class="h-4 w-4"></i>
+          </button>
+        </div>
+
+        <div id="filter-chips" class="no-scrollbar snap-row mt-3 flex gap-2 overflow-x-auto pb-4"></div>
+      </div>
+    </div>
+
+    <main class="scroll-safe px-5 pt-4">
+      <div id="statement-list" class="space-y-6"></div>
+    </main>
+  </section>
+
+  <!-- ══════════════ VIEW: CONFIGURAÇÕES ══════════════ -->
+  <section id="view-settings" data-view="settings" class="hidden flex-1">
+    <div class="pt-safe px-5">
+      <h1 class="pt-5 text-xl font-semibold tracking-tight">Configurações</h1>
+    </div>
+
+    <main class="scroll-safe px-5 pt-5">
+      <div class="rounded-3xl border border-blue-500/15 bg-nv-surface p-5">
+        <div class="flex items-center gap-4">
+          <div id="avatar-settings" class="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-nv-cobalt to-nv-sapphire text-lg font-semibold text-white">A</div>
+          <div class="min-w-0 flex-1">
+            <label for="name-input" class="text-xs text-slate-400">Como devemos te chamar</label>
+            <input id="name-input" type="text" maxlength="24" autocomplete="off"
+                   class="mt-1 w-full rounded-xl border border-blue-500/15 bg-nv-raised px-3 py-2 text-sm text-slate-100 focus:border-nv-active focus:outline-none" />
+          </div>
+        </div>
+        <button data-action="save-name"
+                class="mt-4 w-full rounded-2xl bg-gradient-to-r from-nv-cobalt to-nv-sapphire py-3 text-sm font-semibold text-white transition hover:to-nv-active active:scale-[.98]">
+          Salvar nome
+        </button>
+      </div>
+
+      <h2 class="mt-6 px-1 text-sm font-semibold text-slate-300">Orçamento</h2>
+      <div class="mt-3 overflow-hidden rounded-3xl border border-blue-500/15 bg-nv-surface">
+        <button data-action="open-modal" data-modal="budget" class="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-blue-500/10">
+          <span class="flex items-center gap-3">
+            <i data-lucide="target" class="h-4 w-4 text-nv-neon"></i>
+            <span>
+              <span class="block text-sm text-slate-100">Renda mensal estipulada</span>
+              <span class="mt-0.5 block text-xs text-slate-500">Base do seu saldo regressivo</span>
+            </span>
+          </span>
+          <span class="flex items-center gap-2">
+            <span id="settings-income" class="text-sm font-semibold text-nv-neon">—</span>
+            <i data-lucide="chevron-right" class="h-4 w-4 text-slate-600"></i>
+          </span>
+        </button>
+      </div>
+
+      <h2 class="mt-6 px-1 text-sm font-semibold text-slate-300">Preferências</h2>
+      <div class="mt-3 overflow-hidden rounded-3xl border border-blue-500/15 bg-nv-surface">
+        <button data-action="toggle-balance" class="flex w-full items-center justify-between gap-4 px-5 py-4 text-left transition hover:bg-blue-500/10">
+          <span class="flex items-center gap-3">
+            <i data-lucide="eye" class="h-4 w-4 text-slate-400"></i>
+            <span class="text-sm text-slate-100">Mostrar valores na tela inicial</span>
+          </span>
+          <span id="visibility-switch" class="relative h-6 w-11 shrink-0 rounded-full bg-slate-600/40 transition">
+            <span id="visibility-knob" class="absolute left-0.5 top-0.5 h-5 w-5 rounded-full bg-slate-300 transition-transform"></span>
+          </span>
+        </button>
+      </div>
+
+      <h2 class="mt-6 px-1 text-sm font-semibold text-slate-300">Seus dados</h2>
+      <div class="mt-3 divide-y divide-blue-500/15 overflow-hidden rounded-3xl border border-blue-500/15 bg-nv-surface">
+        <div class="flex items-center justify-between px-5 py-4">
+          <span class="flex items-center gap-3">
+            <i data-lucide="database" class="h-4 w-4 text-slate-400"></i>
+            <span class="text-sm text-slate-100">Movimentações salvas</span>
+          </span>
+          <span id="settings-count" class="text-sm text-slate-400">—</span>
+        </div>
+        <button data-action="copy-data" class="flex w-full items-center justify-between px-5 py-4 text-left transition hover:bg-blue-500/10">
+          <span class="flex items-center gap-3">
+            <i data-lucide="copy" class="h-4 w-4 text-slate-400"></i>
+            <span class="text-sm text-slate-100">Copiar extrato em JSON</span>
+          </span>
+          <i data-lucide="chevron-right" class="h-4 w-4 text-slate-600"></i>
+        </button>
+        <button data-action="reset-data" class="flex w-full items-center justify-between px-5 py-4 text-left transition hover:bg-rose-500/10">
+          <span class="flex items-center gap-3">
+            <i data-lucide="rotate-ccw" class="h-4 w-4 text-rose-500"></i>
+            <span class="text-sm text-rose-500">Apagar tudo e recomeçar</span>
+          </span>
+          <i data-lucide="chevron-right" class="h-4 w-4 text-slate-600"></i>
+        </button>
+      </div>
+
+      <div class="mt-6 rounded-3xl border border-blue-500/15 bg-nv-surface p-5">
+        <div class="flex items-center gap-3">
+          <i data-lucide="shield-check" class="h-4 w-4 text-emerald-500"></i>
+          <p class="text-sm font-semibold text-slate-100">Tudo fica no seu aparelho</p>
+        </div>
+        <p class="mt-2 text-sm leading-relaxed text-slate-400">
+          Renda, saldo e movimentações ficam no IndexedDB do navegador. Nada sai daqui, e os valores são guardados em
+          centavos inteiros para não perder precisão.
+        </p>
+      </div>
+    </main>
+  </section>
+
+  <!-- ══════════════ BOTTOM NAVIGATION ══════════════ -->
+  <nav id="bottom-nav" class="nav-safe fixed inset-x-0 bottom-0 z-30 mx-auto w-full max-w-md border-t border-blue-500/15 bg-nv-bg/95 px-3 pt-2 backdrop-blur">
+    <div class="flex items-stretch justify-around">
+      <button data-action="nav" data-route="home" class="nav-item flex flex-1 flex-col items-center gap-1 rounded-2xl py-2 text-slate-500 transition">
+        <i data-lucide="home" class="h-5 w-5"></i><span class="text-[11px] font-medium">Início</span>
+      </button>
+      <button data-action="nav" data-route="statement" class="nav-item flex flex-1 flex-col items-center gap-1 rounded-2xl py-2 text-slate-500 transition">
+        <i data-lucide="list" class="h-5 w-5"></i><span class="text-[11px] font-medium">Extrato</span>
+      </button>
+      <button data-action="nav" data-route="settings" class="nav-item flex flex-1 flex-col items-center gap-1 rounded-2xl py-2 text-slate-500 transition">
+        <i data-lucide="settings" class="h-5 w-5"></i><span class="text-[11px] font-medium">Ajustes</span>
+      </button>
+    </div>
+  </nav>
+</div>
+
+<!-- ══════════════ SHEET: COMPRA ══════════════ -->
+<div data-sheet-backdrop="expense" class="sheet-backdrop fixed inset-0 z-40 bg-black/75" role="presentation"></div>
+<div data-sheet-panel="expense" role="dialog" aria-modal="true" aria-labelledby="expense-title"
+     class="sheet-panel sheet-safe fixed inset-x-0 bottom-0 z-50 mx-auto max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-3xl border-t border-blue-500/15 bg-nv-raised px-5 pt-3 shadow-sheet">
+  <div class="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-500/40"></div>
+  <div class="flex items-center justify-between">
+    <h2 id="expense-title" class="text-lg font-semibold">Registrar compra</h2>
+    <button data-action="close-modal" aria-label="Fechar" class="flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-blue-500/10">
+      <i data-lucide="x" class="h-5 w-5"></i>
+    </button>
+  </div>
+
+  <div class="mt-5">
+    <label class="text-xs text-slate-400" for="expense-amount">Valor</label>
+    <div class="mt-1 flex items-baseline gap-2 rounded-2xl border border-blue-500/15 bg-nv-surface px-4 py-3 focus-within:border-nv-active">
+      <span class="text-lg text-slate-400">R$</span>
+      <input id="expense-amount" inputmode="numeric" autocomplete="off" placeholder="0,00" data-cents="0"
+             class="w-full bg-transparent text-2xl font-semibold text-rose-400 placeholder:text-slate-600 focus:outline-none" />
+    </div>
+    <p id="expense-preview" class="mt-2 text-xs text-slate-500"></p>
+  </div>
+
+  <div class="mt-4">
+    <label class="text-xs text-slate-400" for="expense-description">Descrição</label>
+    <input id="expense-description" type="text" maxlength="60" autocomplete="off" placeholder="Padaria da esquina"
+           class="mt-1 w-full rounded-2xl border border-blue-500/15 bg-nv-surface px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 focus:border-nv-active focus:outline-none" />
+  </div>
+
+  <div class="mt-4">
+    <label class="text-xs text-slate-400" for="expense-category">Categoria</label>
+    <div class="relative mt-1">
+      <select id="expense-category"
+              class="w-full rounded-2xl border border-blue-500/15 bg-nv-surface px-4 py-3 pr-10 text-sm text-slate-100 focus:border-nv-active focus:outline-none"></select>
+      <i data-lucide="chevron-right" class="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 rotate-90 text-slate-500"></i>
+    </div>
+  </div>
+
+  <div class="mt-4">
+    <p class="text-xs text-slate-400">Forma de pagamento</p>
+    <div id="method-buttons" class="mt-2 grid grid-cols-2 gap-2"></div>
+    <p id="method-error" class="mt-2 hidden text-xs text-rose-500">Escolha como você pagou para continuar.</p>
+  </div>
+
+  <button data-action="submit-expense"
+          class="mt-6 w-full rounded-2xl bg-gradient-to-r from-nv-cobalt to-nv-sapphire py-4 text-sm font-semibold text-white transition hover:to-nv-active active:scale-[.98]">
+    Registrar compra
+  </button>
+</div>
+
+<!-- ══════════════ SHEET: DEPÓSITO ══════════════ -->
+<div data-sheet-backdrop="income" class="sheet-backdrop fixed inset-0 z-40 bg-black/75" role="presentation"></div>
+<div data-sheet-panel="income" role="dialog" aria-modal="true" aria-labelledby="income-title"
+     class="sheet-panel sheet-safe fixed inset-x-0 bottom-0 z-50 mx-auto max-h-[92dvh] w-full max-w-md overflow-y-auto rounded-t-3xl border-t border-blue-500/15 bg-nv-raised px-5 pt-3 shadow-sheet">
+  <div class="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-500/40"></div>
+  <div class="flex items-center justify-between">
+    <h2 id="income-title" class="text-lg font-semibold">Receber depósito</h2>
+    <button data-action="close-modal" aria-label="Fechar" class="flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-blue-500/10">
+      <i data-lucide="x" class="h-5 w-5"></i>
+    </button>
+  </div>
+
+  <div class="mt-5">
+    <label class="text-xs text-slate-400" for="income-amount">Valor</label>
+    <div class="mt-1 flex items-baseline gap-2 rounded-2xl border border-blue-500/15 bg-nv-surface px-4 py-3 focus-within:border-emerald-500">
+      <span class="text-lg text-slate-400">R$</span>
+      <input id="income-amount" inputmode="numeric" autocomplete="off" placeholder="0,00" data-cents="0"
+             class="w-full bg-transparent text-2xl font-semibold text-emerald-500 placeholder:text-slate-600 focus:outline-none" />
+    </div>
+  </div>
+
+  <div class="mt-4">
+    <label class="text-xs text-slate-400" for="income-description">Descrição</label>
+    <input id="income-description" type="text" maxlength="60" autocomplete="off" placeholder="Pagamento do freela"
+           class="mt-1 w-full rounded-2xl border border-blue-500/15 bg-nv-surface px-4 py-3 text-sm text-slate-100 placeholder:text-slate-600 focus:border-emerald-500 focus:outline-none" />
+  </div>
+
+  <div class="mt-4">
+    <label class="text-xs text-slate-400" for="income-origin">Origem</label>
+    <div class="relative mt-1">
+      <select id="income-origin"
+              class="w-full rounded-2xl border border-blue-500/15 bg-nv-surface px-4 py-3 pr-10 text-sm text-slate-100 focus:border-emerald-500 focus:outline-none"></select>
+      <i data-lucide="chevron-right" class="pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 rotate-90 text-slate-500"></i>
+    </div>
+  </div>
+
+  <button data-action="submit-income"
+          class="mt-6 w-full rounded-2xl bg-emerald-600 py-4 text-sm font-semibold text-white transition hover:bg-emerald-500 active:scale-[.98]">
+    Adicionar depósito
+  </button>
+</div>
+
+<!-- ══════════════ SHEET: RENDA MENSAL ══════════════ -->
+<div data-sheet-backdrop="budget" class="sheet-backdrop fixed inset-0 z-40 bg-black/75" role="presentation"></div>
+<div data-sheet-panel="budget" role="dialog" aria-modal="true" aria-labelledby="budget-title"
+     class="sheet-panel sheet-safe fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-md rounded-t-3xl border-t border-blue-500/15 bg-nv-raised px-5 pt-3 shadow-sheet">
+  <div class="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-500/40"></div>
+  <div class="flex items-center justify-between">
+    <h2 id="budget-title" class="text-lg font-semibold">Renda mensal</h2>
+    <button data-action="close-modal" aria-label="Fechar" class="flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-blue-500/10">
+      <i data-lucide="x" class="h-5 w-5"></i>
+    </button>
+  </div>
+  <p class="mt-2 text-sm leading-relaxed text-slate-400">
+    É desse valor que suas compras são descontadas todo mês. O saldo restante zera e recomeça a cada mês novo.
+  </p>
+
+  <div class="mt-5">
+    <label class="text-xs text-slate-400" for="budget-amount">Quanto você recebe por mês</label>
+    <div class="mt-1 flex items-baseline gap-2 rounded-2xl border border-blue-500/15 bg-nv-surface px-4 py-3 focus-within:border-nv-active">
+      <span class="text-lg text-slate-400">R$</span>
+      <input id="budget-amount" inputmode="numeric" autocomplete="off" placeholder="0,00" data-cents="0"
+             class="w-full bg-transparent text-2xl font-semibold text-nv-neon placeholder:text-slate-600 focus:outline-none" />
+    </div>
+  </div>
+
+  <button data-action="save-budget"
+          class="mt-6 w-full rounded-2xl bg-gradient-to-r from-nv-cobalt to-nv-sapphire py-4 text-sm font-semibold text-white transition hover:to-nv-active active:scale-[.98]">
+    Salvar renda mensal
+  </button>
+</div>
+
+<!-- ══════════════ SHEET: COMPROVANTE ══════════════ -->
+<div data-sheet-backdrop="receipt" class="sheet-backdrop fixed inset-0 z-40 bg-black/80" role="presentation"></div>
+<div data-sheet-panel="receipt" role="dialog" aria-modal="true" aria-labelledby="receipt-title"
+     class="sheet-panel sheet-safe fixed inset-x-0 bottom-0 z-50 mx-auto max-h-[94dvh] w-full max-w-md overflow-y-auto rounded-t-3xl border-t border-blue-500/15 bg-nv-raised px-5 pt-3 shadow-sheet">
+  <div class="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-500/40"></div>
+  <div id="receipt-body"></div>
+</div>
+
+<!-- ══════════════ SHEET: CONFIRMAÇÃO ══════════════ -->
+<div data-sheet-backdrop="confirm" class="sheet-backdrop fixed inset-0 z-40 bg-black/75" role="presentation"></div>
+<div data-sheet-panel="confirm" role="dialog" aria-modal="true" aria-labelledby="confirm-title"
+     class="sheet-panel sheet-safe fixed inset-x-0 bottom-0 z-50 mx-auto w-full max-w-md rounded-t-3xl border-t border-blue-500/15 bg-nv-raised px-5 pt-3 shadow-sheet">
+  <div class="mx-auto mb-4 h-1 w-10 rounded-full bg-slate-500/40"></div>
+  <h2 id="confirm-title" class="text-lg font-semibold">Estornar movimentação</h2>
+  <p id="confirm-text" class="mt-2 text-sm leading-relaxed text-slate-400"></p>
+  <div class="mt-6 grid grid-cols-2 gap-3">
+    <button data-action="close-modal" class="rounded-2xl border border-blue-500/15 bg-nv-surface py-3.5 text-sm font-semibold text-slate-100 transition hover:bg-blue-500/10">Manter</button>
+    <button data-action="confirm-delete" class="rounded-2xl bg-rose-600 py-3.5 text-sm font-semibold text-white transition hover:bg-rose-500">Estornar</button>
+  </div>
+</div>
+
+<!-- ══════════════ TOASTS ══════════════ -->
+<div id="toast-container" class="pt-safe pointer-events-none fixed inset-x-0 top-0 z-[60] mx-auto flex w-full max-w-md flex-col gap-2 px-4 pt-3" role="status" aria-live="polite"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   Cobalt — SPA de arquivo único
+   Camadas: Database (Dexie/IndexedDB) → State (Proxy reativo) → UI (funções puras)
+   Regra crítica: dinheiro SEMPRE em inteiros (centavos). Conversão só na View.
+   Modelo: orçamento mensal regressivo (renda estipulada − gastos do mês).
+   ═══════════════════════════════════════════════════════════════════════ */
+(function () {
+  'use strict';
+
+  /* ───────────────────────── 0. CONSTANTES DE DOMÍNIO ───────────────────────── */
+
+  const EXPENSE_CATEGORIES = [
+    { id: 'food',      label: 'Alimentação',       icon: 'utensils-crossed' },
+    { id: 'transport', label: 'Transporte',        icon: 'car' },
+    { id: 'home',      label: 'Moradia',           icon: 'home' },
+    { id: 'leisure',   label: 'Lazer',             icon: 'gamepad-2' },
+    { id: 'health',    label: 'Saúde',             icon: 'heart-pulse' },
+    { id: 'shopping',  label: 'Compras',           icon: 'shopping-bag' },
+    { id: 'education', label: 'Educação',          icon: 'graduation-cap' },
+    { id: 'bills',     label: 'Contas e serviços', icon: 'receipt' },
+    { id: 'other',     label: 'Outros',            icon: 'more-horizontal' }
+  ];
+
+  const INCOME_ORIGINS = [
+    { id: 'salary',   label: 'Salário',           icon: 'briefcase',        method: 'transfer' },
+    { id: 'pix_in',   label: 'Pix recebido',      icon: 'zap',              method: 'pix' },
+    { id: 'transfer', label: 'Transferência',     icon: 'arrow-left-right', method: 'transfer' },
+    { id: 'cash_in',  label: 'Dinheiro em conta', icon: 'banknote',         method: 'cash' },
+    { id: 'yield',    label: 'Rendimentos',       icon: 'trending-up',      method: 'transfer' },
+    { id: 'refund',   label: 'Reembolso',         icon: 'arrow-down-left',  method: 'transfer' }
+  ];
+
+  const METHODS = {
+    pix:      { label: 'Pix',           icon: 'zap' },
+    debit:    { label: 'Débito',        icon: 'credit-card' },
+    credit:   { label: 'Crédito',       icon: 'credit-card' },
+    cash:     { label: 'Dinheiro',      icon: 'banknote' },
+    transfer: { label: 'Transferência', icon: 'arrow-left-right' }
+  };
+
+  const PAYMENT_CHOICES = ['pix', 'debit', 'credit', 'cash'];
+
+  const FILTERS = [
+    { id: 'all',    label: 'Todos' },
+    { id: 'pix',    label: 'Pix' },
+    { id: 'debit',  label: 'Débito' },
+    { id: 'credit', label: 'Crédito' },
+    { id: 'cash',   label: 'Dinheiro' }
+  ];
+
+  const CATEGORY_INDEX = Object.create(null);
+  EXPENSE_CATEGORIES.forEach(function (c) { CATEGORY_INDEX[c.id] = c; });
+  INCOME_ORIGINS.forEach(function (c) { CATEGORY_INDEX[c.id] = c; });
+
+  const categoryOf = function (id) {
+    return CATEGORY_INDEX[id] || { id: 'other', label: 'Outros', icon: 'more-horizontal' };
+  };
+  const methodOf = function (id) {
+    return METHODS[id] || { label: 'Outro', icon: 'more-horizontal' };
+  };
+
+  /* ───────────────────────── 1. UTILITÁRIOS ───────────────────────── */
+
+  const ESCAPE_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+  const esc = function (value) {
+    return String(value == null ? '' : value).replace(/[&<>"']/g, function (ch) { return ESCAPE_MAP[ch]; });
+  };
+
+  const groupFormatter = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+
+  // View layer: inteiro de centavos → BRL, sem nenhuma aritmética de ponto flutuante.
+  const formatCents = function (cents, options) {
+    const opts = options || {};
+    const value = Number.isFinite(cents) ? Math.trunc(cents) : 0;
+    const negative = value < 0;
+    const absolute = Math.abs(value);
+    const units = Math.floor(absolute / 100);
+    const remainder = String(absolute % 100).padStart(2, '0');
+    const body = groupFormatter.format(units) + ',' + remainder;
+    let sign = '';
+    if (opts.signed) sign = negative ? '- ' : '+ ';
+    else if (negative) sign = '- ';
+    return sign + (opts.bare ? body : 'R$ ' + body);
+  };
+
+  const formatPlain = function (cents) {
+    const absolute = Math.abs(Math.trunc(cents));
+    return groupFormatter.format(Math.floor(absolute / 100)) + ',' + String(absolute % 100).padStart(2, '0');
+  };
+
+  const MASK = 'R$ ' + '\u2022'.repeat(5);
+
+  const timeFormatter = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const clockFormatter = new Intl.DateTimeFormat('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const dayFormatter = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
+  const shortFormatter = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' });
+  const fullDateFormatter = new Intl.DateTimeFormat('pt-BR', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+  const monthFormatter = new Intl.DateTimeFormat('pt-BR', { month: 'long' });
+
+  const DAY_MS = 86400000;
+  const HOUR_MS = 3600000;
+
+  const startOfDay = function (ms) {
+    const d = new Date(ms);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+
+  const startOfMonth = function (ms) {
+    const d = new Date(ms);
+    return new Date(d.getFullYear(), d.getMonth(), 1).getTime();
+  };
+
+  const dayLabel = function (ms) {
+    const diffDays = Math.round((startOfDay(Date.now()) - startOfDay(ms)) / DAY_MS);
+    if (diffDays === 0) return 'Hoje';
+    if (diffDays === 1) return 'Ontem';
+    return dayFormatter.format(new Date(ms));
+  };
+
+  const capitalize = function (text) {
+    return text ? text.charAt(0).toUpperCase() + text.slice(1) : text;
+  };
+
+  // Código de autenticação simulado, determinístico por transação.
+  const authCode = function (tx) {
+    const seed = ((tx.id * 2654435761) ^ tx.timestamp_ms) >>> 0;
+    const hex = seed.toString(16).toUpperCase().padStart(8, '0');
+    const tail = (tx.timestamp_ms % 1679616).toString(36).toUpperCase().padStart(4, '0');
+    return 'E' + hex.slice(0, 4) + '.' + hex.slice(4, 8) + '.' + tail;
+  };
+
+  /* ───────────────────────── 2. DATABASE LAYER ───────────────────────── */
+
+  const db = new Dexie('FintechAppDB');
+
+  const STORES = {
+    account: 'id',
+    transactions: '++id, type, amount_cents, description, category, payment_method, timestamp_ms'
+  };
+
+  const SEED_BALANCE_CENTS = 385000; // R$ 3.850,00
+  const SEED_INCOME_CENTS = 400000;  // R$ 4.000,00 de renda mensal
+
+  db.version(1).stores(STORES);
+  db.version(2).stores(STORES).upgrade(function (tx) {
+    // Contas criadas na v1 não conhecem o orçamento mensal: aplica o padrão.
+    return tx.table('account').toCollection().modify(function (account) {
+      if (account.monthly_income_cents == null) account.monthly_income_cents = SEED_INCOME_CENTS;
+    });
+  });
+
+  const buildSeed = function () {
+    const now = Date.now();
+    return [
+      { type: 'expense', amount_cents: 4290,   description: 'Almoço no Térreo',        category: 'food',      payment_method: 'debit',    timestamp_ms: now - 3 * HOUR_MS },
+      { type: 'income',  amount_cents: 120000, description: 'Transferência de Ana',    category: 'pix_in',    payment_method: 'pix',      timestamp_ms: now - 1 * DAY_MS - 2 * HOUR_MS },
+      { type: 'expense', amount_cents: 12990,  description: 'Assinatura de streaming', category: 'leisure',   payment_method: 'credit',   timestamp_ms: now - 2 * DAY_MS - 5 * HOUR_MS },
+      { type: 'expense', amount_cents: 8900,   description: 'Corrida até o aeroporto', category: 'transport', payment_method: 'pix',      timestamp_ms: now - 3 * DAY_MS - 8 * HOUR_MS },
+      { type: 'income',  amount_cents: 250000, description: 'Salário do mês',          category: 'salary',    payment_method: 'transfer', timestamp_ms: now - 5 * DAY_MS - 9 * HOUR_MS },
+      { type: 'expense', amount_cents: 32045,  description: 'Mercado Bom Preço',       category: 'shopping',  payment_method: 'credit',   timestamp_ms: now - 6 * DAY_MS - 4 * HOUR_MS }
+    ];
+  };
+
+  const seedAccount = function () {
+    return {
+      id: 1,
+      balance_cents: SEED_BALANCE_CENTS,
+      monthly_income_cents: SEED_INCOME_CENTS,
+      owner_name: 'Alex',
+      updated_ms: Date.now()
+    };
+  };
+
+  const Database = {
+    async bootstrap() {
+      const account = await db.account.get(1);
+      if (!account) {
+        await db.transaction('rw', db.account, db.transactions, async function () {
+          await db.account.put(seedAccount());
+          await db.transactions.bulkAdd(buildSeed());
+        });
+      } else if (account.monthly_income_cents == null) {
+        account.monthly_income_cents = SEED_INCOME_CENTS;
+        await db.account.put(account);
+      }
+    },
+
+    async snapshot() {
+      const account = await db.account.get(1);
+      const transactions = await db.transactions.orderBy('timestamp_ms').reverse().toArray();
+      return {
+        balance_cents: account ? account.balance_cents : 0,
+        monthly_income_cents: account && account.monthly_income_cents != null ? account.monthly_income_cents : SEED_INCOME_CENTS,
+        owner_name: (account && account.owner_name) || 'Alex',
+        transactions: transactions
+      };
+    },
+
+    async addTransaction(payload) {
+      return db.transaction('rw', db.account, db.transactions, async function () {
+        const id = await db.transactions.add(payload);
+        const account = await db.account.get(1);
+        const delta = payload.type === 'income' ? payload.amount_cents : -payload.amount_cents;
+        account.balance_cents = account.balance_cents + delta; // inteiro ± inteiro
+        account.updated_ms = Date.now();
+        await db.account.put(account);
+        return { id: id, balance_cents: account.balance_cents };
+      });
+    },
+
+    async removeTransaction(id) {
+      return db.transaction('rw', db.account, db.transactions, async function () {
+        const tx = await db.transactions.get(id);
+        if (!tx) throw new Error('Movimentação não encontrada.');
+        await db.transactions.delete(id);
+        const account = await db.account.get(1);
+        const delta = tx.type === 'income' ? -tx.amount_cents : tx.amount_cents; // estorno devolve ao orçamento
+        account.balance_cents = account.balance_cents + delta;
+        account.updated_ms = Date.now();
+        await db.account.put(account);
+        return { balance_cents: account.balance_cents, transaction: tx };
+      });
+    },
+
+    async saveIncome(cents) {
+      const account = await db.account.get(1);
+      account.monthly_income_cents = cents;
+      account.updated_ms = Date.now();
+      await db.account.put(account);
+      return cents;
+    },
+
+    async renameOwner(name) {
+      const account = await db.account.get(1);
+      account.owner_name = name;
+      account.updated_ms = Date.now();
+      await db.account.put(account);
+      return name;
+    },
+
+    async reset() {
+      await db.transaction('rw', db.account, db.transactions, async function () {
+        await db.transactions.clear();
+        await db.account.clear();
+        await db.account.put(seedAccount());
+        await db.transactions.bulkAdd(buildSeed());
+      });
+    }
+  };
+
+  /* ───────────────────────── 3. STATE LAYER (Proxy reativo) ───────────────────────── */
+
+  const createStore = function (initial) {
+    const subscribers = [];
+    const dirty = new Set();
+    const proxyCache = new WeakMap();
+    let scheduled = false;
+
+    const flush = function () {
+      scheduled = false;
+      const keys = new Set(dirty);
+      dirty.clear();
+      for (let i = 0; i < subscribers.length; i++) {
+        const sub = subscribers[i];
+        if (keys.has('*')) { sub.render(); continue; }
+        for (let j = 0; j < sub.deps.length; j++) {
+          if (keys.has(sub.deps[j])) { sub.render(); break; }
+        }
+      }
+      refreshIcons();
+    };
+
+    const notify = function (key) {
+      dirty.add(key);
+      if (scheduled) return;
+      scheduled = true;
+      if (window.requestAnimationFrame) window.requestAnimationFrame(flush);
+      else setTimeout(flush, 16);
+    };
+
+    // Proxy profundo e memoizado: mutações aninhadas reportam a chave-raiz.
+    const wrap = function (target, rootKey) {
+      if (target === null || typeof target !== 'object') return target;
+      const cached = proxyCache.get(target);
+      if (cached) return cached;
+      const proxy = new Proxy(target, {
+        get: function (obj, key, receiver) {
+          const value = Reflect.get(obj, key, receiver);
+          if (value !== null && typeof value === 'object' && key !== 'constructor') return wrap(value, rootKey);
+          return value;
+        },
+        set: function (obj, key, value, receiver) {
+          if (Object.is(obj[key], value)) return true;
+          const ok = Reflect.set(obj, key, value, receiver);
+          notify(rootKey);
+          return ok;
+        },
+        deleteProperty: function (obj, key) {
+          const ok = Reflect.deleteProperty(obj, key);
+          notify(rootKey);
+          return ok;
+        }
+      });
+      proxyCache.set(target, proxy);
+      return proxy;
+    };
+
+    const root = new Proxy(initial, {
+      get: function (obj, key, receiver) {
+        const value = Reflect.get(obj, key, receiver);
+        if (value !== null && typeof value === 'object') return wrap(value, key);
+        return value;
+      },
+      set: function (obj, key, value, receiver) {
+        if (Object.is(obj[key], value)) return true;
+        const ok = Reflect.set(obj, key, value, receiver);
+        notify(key);
+        return ok;
+      }
+    });
+
+    return {
+      state: root,
+      subscribe: function (deps, render) { subscribers.push({ deps: deps, render: render }); },
+      renderAll: function () { subscribers.forEach(function (s) { s.render(); }); refreshIcons(); }
+    };
+  };
+
+  const store = createStore({
+    route: 'home',
+    loading: true,
+    balanceVisible: true,
+    balance_cents: 0,
+    monthlyIncomeCents: SEED_INCOME_CENTS,
+    ownerName: 'Alex',
+    transactions: [],
+    search: '',
+    filter: 'all',
+    modal: null,          // 'expense' | 'income' | 'budget' | 'receipt' | 'confirm' | null
+    draftMethod: null,
+    draftAmount: 0,
+    receiptId: null,
+    pendingDelete: null,
+    toasts: []
+  });
+
+  const state = store.state;
+
+  /* ───────────────────────── 4. INFRA DE UI ───────────────────────── */
+
+  const $ = function (selector) { return document.querySelector(selector); };
+
+  let iconTimer = null;
+  const refreshIcons = function () {
+    if (!window.lucide || typeof window.lucide.createIcons !== 'function') return;
+    if (iconTimer) return;
+    iconTimer = requestAnimationFrame(function () {
+      iconTimer = null;
+      try { window.lucide.createIcons(); } catch (err) { console.warn('Lucide indisponível:', err); }
+    });
+  };
+
+  let toastSeq = 0;
+  const TOAST_STYLES = {
+    success: { ring: 'border-emerald-500/30', icon: 'check',          tone: 'text-emerald-500' },
+    error:   { ring: 'border-rose-500/30',    icon: 'alert-triangle', tone: 'text-rose-500' },
+    info:    { ring: 'border-blue-500/25',    icon: 'info',           tone: 'text-nv-neon' }
+  };
+
+  const showToast = function (message, type) {
+    const id = ++toastSeq;
+    state.toasts = state.toasts.concat([{ id: id, message: message, type: type || 'info' }]);
+    setTimeout(function () {
+      state.toasts = state.toasts.filter(function (t) { return t.id !== id; });
+    }, 3600);
+  };
+
+  /* ───────────────────────── 5. SELETORES DERIVADOS (orçamento) ───────────────────────── */
+
+  const budgetSnapshot = function () {
+    const monthStart = startOfMonth(Date.now());
+    let spent = 0;
+    let earned = 0;
+    state.transactions.forEach(function (tx) {
+      if (tx.timestamp_ms < monthStart) return;
+      if (tx.type === 'income') earned += tx.amount_cents;
+      else spent += tx.amount_cents;
+    });
+    const income = state.monthlyIncomeCents;
+    const remaining = income - spent;               // inteiro − inteiro
+    const percent = income > 0 ? Math.round((spent * 100) / income) : (spent > 0 ? 100 : 0);
+    return {
+      income: income,
+      spent: spent,
+      earned: earned,
+      remaining: remaining,
+      percent: percent,
+      capped: Math.max(0, Math.min(100, percent)),
+      over: spent > income,
+      warning: !(spent > income) && percent >= 80,
+      monthLabel: capitalize(monthFormatter.format(new Date()))
+    };
+  };
+
+  // Saldo do orçamento logo após a transação indicada (mesma competência mensal).
+  const remainingAfter = function (tx) {
+    const monthStart = startOfMonth(tx.timestamp_ms);
+    let spent = 0;
+    state.transactions.forEach(function (item) {
+      if (item.type !== 'expense') return;
+      if (item.timestamp_ms < monthStart) return;
+      if (startOfMonth(item.timestamp_ms) !== monthStart) return;
+      if (item.timestamp_ms > tx.timestamp_ms) return;
+      if (item.timestamp_ms === tx.timestamp_ms && item.id > tx.id) return;
+      spent += item.amount_cents;
+    });
+    return state.monthlyIncomeCents - spent;
+  };
+
+  // Saldo em conta logo após a transação indicada.
+  const balanceAfter = function (tx) {
+    let balance = state.balance_cents;
+    state.transactions.forEach(function (item) {
+      const newer = item.timestamp_ms > tx.timestamp_ms ||
+                   (item.timestamp_ms === tx.timestamp_ms && item.id > tx.id);
+      if (!newer) return;
+      balance -= item.type === 'income' ? item.amount_cents : -item.amount_cents;
+    });
+    return balance;
+  };
+
+  const visibleTransactions = function () {
+    const term = state.search.trim().toLowerCase();
+    const filter = state.filter;
+    return state.transactions.filter(function (tx) {
+      if (filter !== 'all' && tx.payment_method !== filter) return false;
+      if (!term) return true;
+      const category = categoryOf(tx.category).label.toLowerCase();
+      const method = methodOf(tx.payment_method).label.toLowerCase();
+      return tx.description.toLowerCase().indexOf(term) !== -1 ||
+             category.indexOf(term) !== -1 ||
+             method.indexOf(term) !== -1;
+    });
+  };
+
+  const findTransaction = function (id) {
+    return state.transactions.find(function (tx) { return tx.id === id; }) || null;
+  };
+
+  /* ───────────────────────── 6. UI/COMPONENT LAYER (funções puras) ───────────────────────── */
+
+  const HeroCard = function (data) {
+    const hidden = data.hidden;
+    const b = data.budget;
+    const remainingTone = b.over ? 'text-rose-500' : 'text-slate-50';
+    const fill = b.over
+      ? 'bg-gradient-to-r from-rose-600 to-rose-400'
+      : b.warning
+        ? 'bg-gradient-to-r from-amber-500 to-amber-300'
+        : 'bg-gradient-to-r from-nv-cobalt via-nv-sapphire to-nv-neon';
+
+    const alert = b.over
+      ? '<div class="mt-4 flex items-start gap-3 rounded-2xl border border-rose-500/30 bg-rose-500/10 px-4 py-3">' +
+          '<i data-lucide="alert-triangle" class="mt-0.5 h-4 w-4 shrink-0 text-rose-500"></i>' +
+          '<p class="text-xs leading-relaxed text-rose-200">Você passou do teto do mês em ' +
+            esc(formatCents(Math.abs(b.remaining))) + '. Ajuste a renda estipulada ou estorne uma compra.</p>' +
+        '</div>'
+      : b.warning
+        ? '<div class="mt-4 flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">' +
+            '<i data-lucide="alert-triangle" class="mt-0.5 h-4 w-4 shrink-0 text-amber-400"></i>' +
+            '<p class="text-xs leading-relaxed text-amber-100">Já foram ' + esc(String(b.percent)) + '% da renda do mês. Resta ' +
+              esc(formatCents(b.remaining)) + '.</p>' +
+          '</div>'
+        : '';
+
+    return '' +
+      '<div class="rounded-3xl border border-blue-500/15 bg-nv-surface p-5">' +
+        '<div class="flex items-start justify-between">' +
+          '<div>' +
+            '<div class="flex items-center gap-2 text-slate-400">' +
+              '<i data-lucide="wallet" class="h-4 w-4"></i>' +
+              '<span class="text-sm">Saldo restante de ' + esc(b.monthLabel) + '</span>' +
+            '</div>' +
+            '<p class="mt-3 text-[2rem] font-semibold leading-none tracking-tight ' + remainingTone + '">' +
+              esc(hidden ? MASK : formatCents(b.remaining)) +
+            '</p>' +
+          '</div>' +
+          '<button data-action="open-modal" data-modal="budget" aria-label="Editar renda mensal" ' +
+                  'class="flex h-9 w-9 items-center justify-center rounded-full border border-blue-500/15 bg-nv-raised text-nv-neon transition hover:bg-blue-500/10 active:scale-95">' +
+            '<i data-lucide="pencil" class="h-4 w-4"></i>' +
+          '</button>' +
+        '</div>' +
+
+        '<div class="mt-5">' +
+          '<div class="budget-track h-2 w-full overflow-hidden rounded-full">' +
+            '<div class="budget-fill h-full rounded-full ' + fill + '" style="width:' + b.capped + '%"></div>' +
+          '</div>' +
+          '<div class="mt-2 flex items-center justify-between text-xs">' +
+            '<span class="text-slate-400">Gasto ' + esc(hidden ? MASK : formatCents(b.spent)) + ' de ' + esc(hidden ? MASK : formatCents(b.income)) + '</span>' +
+            '<span class="font-semibold ' + (b.over ? 'text-rose-500' : 'text-nv-neon') + '">' + esc(String(b.percent)) + '%</span>' +
+          '</div>' +
+        '</div>' +
+
+        alert +
+
+        '<div class="mt-5 grid grid-cols-2 gap-3">' +
+          '<button data-action="open-modal" data-modal="expense" ' +
+                  'class="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-nv-cobalt to-nv-sapphire px-4 py-3 text-sm font-semibold text-white shadow-cobalt transition hover:to-nv-active active:scale-[.98]">' +
+            '<i data-lucide="arrow-up-right" class="h-4 w-4"></i> Registrar compra' +
+          '</button>' +
+          '<button data-action="open-modal" data-modal="income" ' +
+                  'class="flex items-center justify-center gap-2 rounded-2xl border border-blue-500/15 bg-nv-raised px-4 py-3 text-sm font-semibold text-slate-100 transition hover:bg-blue-500/10 active:scale-[.98]">' +
+            '<i data-lucide="arrow-down-left" class="h-4 w-4"></i> Receber depósito' +
+          '</button>' +
+        '</div>' +
+      '</div>';
+  };
+
+  const HeroSkeleton = function () {
+    return '' +
+      '<div class="rounded-3xl border border-blue-500/15 bg-nv-surface p-5">' +
+        '<div class="h-4 w-40 rounded-lg skeleton"></div>' +
+        '<div class="mt-4 h-8 w-52 rounded-lg skeleton"></div>' +
+        '<div class="mt-6 h-2 w-full rounded-full skeleton"></div>' +
+        '<div class="mt-6 grid grid-cols-2 gap-3"><div class="h-12 rounded-2xl skeleton"></div><div class="h-12 rounded-2xl skeleton"></div></div>' +
+      '</div>';
+  };
+
+  const SummaryTile = function (config) {
+    return '' +
+      '<div class="rounded-2xl border border-blue-500/15 bg-nv-surface px-4 py-3">' +
+        '<div class="flex items-center gap-2 text-slate-400">' +
+          '<i data-lucide="' + esc(config.icon) + '" class="h-3.5 w-3.5"></i>' +
+          '<span class="text-[11px]">' + esc(config.label) + '</span>' +
+        '</div>' +
+        '<p class="mt-1.5 text-base font-semibold ' + config.tone + '">' + esc(config.value) + '</p>' +
+      '</div>';
+  };
+
+  const TransactionRow = function (tx, options) {
+    const opts = options || {};
+    const category = categoryOf(tx.category);
+    const method = methodOf(tx.payment_method);
+    const isIncome = tx.type === 'income';
+    const amountTone = isIncome ? 'text-emerald-500' : 'text-rose-500';
+    const bubble = isIncome ? 'bg-emerald-500/10 text-emerald-500' : 'bg-blue-500/10 text-nv-neon';
+    const signedCents = isIncome ? tx.amount_cents : -tx.amount_cents;
+    const amount = opts.hidden ? MASK : formatCents(signedCents, { signed: true });
+
+    const trailing = opts.deletable
+      ? '<button data-action="ask-delete" data-id="' + esc(tx.id) + '" aria-label="Estornar ' + esc(tx.description) + '" ' +
+                'class="flex h-8 w-8 items-center justify-center rounded-full text-slate-600 transition hover:bg-rose-500/10 hover:text-rose-500">' +
+          '<i data-lucide="trash-2" class="h-4 w-4"></i>' +
+        '</button>'
+      : '<i data-lucide="chevron-right" class="h-4 w-4 text-slate-600"></i>';
+
+    return '' +
+      '<li data-action="open-receipt" data-id="' + esc(tx.id) + '" role="button" tabindex="0" ' +
+          'aria-label="Ver comprovante de ' + esc(tx.description) + '" ' +
+          'class="flex cursor-pointer items-center gap-3 rounded-2xl border border-blue-500/15 bg-nv-surface px-4 py-3 transition hover:border-nv-active/60 hover:bg-nv-raised active:scale-[.99]">' +
+        '<span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full ' + bubble + '">' +
+          '<i data-lucide="' + esc(category.icon) + '" class="h-[18px] w-[18px]"></i>' +
+        '</span>' +
+        '<div class="min-w-0 flex-1">' +
+          '<p class="truncate text-sm font-medium text-slate-100">' + esc(tx.description) + '</p>' +
+          '<div class="mt-1 flex flex-wrap items-center gap-1.5">' +
+            '<span class="rounded-full border border-blue-500/20 bg-blue-500/10 px-2 py-0.5 text-[10px] font-medium text-nv-neon">' + esc(method.label) + '</span>' +
+            '<span class="text-[11px] text-slate-500">' + esc(category.label) + ' \u00b7 ' + esc(timeFormatter.format(new Date(tx.timestamp_ms))) + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="flex shrink-0 items-center gap-1">' +
+          '<span class="text-sm font-semibold ' + amountTone + '">' + esc(amount) + '</span>' +
+          trailing +
+        '</div>' +
+      '</li>';
+  };
+
+  const ReceiptLine = function (icon, label, value, tone) {
+    return '' +
+      '<div class="flex items-start justify-between gap-4 py-3.5">' +
+        '<span class="flex items-center gap-2.5 text-sm text-slate-400">' +
+          '<i data-lucide="' + esc(icon) + '" class="h-4 w-4 text-slate-500"></i>' + esc(label) +
+        '</span>' +
+        '<span class="text-right text-sm font-medium ' + (tone || 'text-slate-100') + '">' + value + '</span>' +
+      '</div>';
+  };
+
+  const Receipt = function (tx) {
+    const category = categoryOf(tx.category);
+    const method = methodOf(tx.payment_method);
+    const isIncome = tx.type === 'income';
+    const date = new Date(tx.timestamp_ms);
+    const statusLabel = isIncome ? 'Depósito confirmado' : 'Compra confirmada';
+    const amountTone = isIncome ? 'text-emerald-400' : 'text-rose-400';
+    const amountText = (isIncome ? '+ ' : '- ') + formatCents(tx.amount_cents);
+    const ring = isIncome ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400' : 'border-blue-500/25 bg-blue-500/10 text-nv-neon';
+
+    const remaining = remainingAfter(tx);
+    const afterValue = isIncome
+      ? formatCents(balanceAfter(tx))
+      : formatCents(remaining);
+    const afterLabel = isIncome ? 'Saldo em conta após' : 'Saldo do mês após';
+    const afterTone = isIncome ? 'text-emerald-400' : (remaining < 0 ? 'text-rose-400' : 'text-slate-100');
+
+    return '' +
+      '<div class="flex items-start justify-between">' +
+        '<div class="flex items-center gap-3">' +
+          '<span class="flex h-12 w-12 items-center justify-center rounded-2xl border ' + ring + '">' +
+            '<i data-lucide="' + esc(category.icon) + '" class="h-5 w-5"></i>' +
+          '</span>' +
+          '<div>' +
+            '<div class="flex items-center gap-1.5">' +
+              '<i data-lucide="badge-check" class="h-4 w-4 ' + (isIncome ? 'text-emerald-400' : 'text-nv-neon') + '"></i>' +
+              '<h2 id="receipt-title" class="text-sm font-semibold text-slate-100">' + esc(statusLabel) + '</h2>' +
+            '</div>' +
+            '<p class="mt-0.5 text-xs text-slate-500">Comprovante gerado pelo app</p>' +
+          '</div>' +
+        '</div>' +
+        '<button data-action="close-modal" aria-label="Fechar comprovante" ' +
+                'class="flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-blue-500/10">' +
+          '<i data-lucide="x" class="h-5 w-5"></i>' +
+        '</button>' +
+      '</div>' +
+
+      '<div class="mt-6">' +
+        '<p class="text-xs text-slate-500">Valor</p>' +
+        '<p class="mt-1 text-3xl font-bold tracking-tight ' + amountTone + '">' + esc(amountText) + '</p>' +
+        '<p class="mt-2 text-base font-medium text-slate-100">' + esc(tx.description) + '</p>' +
+        '<p class="mt-0.5 text-xs text-slate-500">' + esc(capitalize(fullDateFormatter.format(date))) + '</p>' +
+      '</div>' +
+
+      '<div class="receipt-notch my-5 h-3 w-full"></div>' +
+
+      '<div class="divide-y divide-blue-500/15 rounded-2xl border border-blue-500/15 bg-nv-surface px-4">' +
+        ReceiptLine('calendar', 'Data', esc(date.toLocaleDateString('pt-BR'))) +
+        ReceiptLine('clock', 'Horário', esc(clockFormatter.format(date))) +
+        ReceiptLine('credit-card', 'Forma de pagamento',
+          '<span class="inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-xs font-medium text-nv-neon">' +
+            '<i data-lucide="' + esc(method.icon) + '" class="h-3.5 w-3.5"></i>' + esc(method.label) +
+          '</span>') +
+        ReceiptLine('tag', 'Categoria', esc(category.label)) +
+        ReceiptLine('target', afterLabel, esc(afterValue), afterTone) +
+        ReceiptLine('hash', 'Autenticação', '<span class="font-mono text-xs tracking-wider text-slate-300">' + esc(authCode(tx)) + '</span>') +
+      '</div>' +
+
+      '<div class="mt-6 grid grid-cols-2 gap-3">' +
+        '<button data-action="close-modal" ' +
+                'class="rounded-2xl border border-blue-500/15 bg-nv-surface py-3.5 text-sm font-semibold text-slate-100 transition hover:bg-blue-500/10 active:scale-[.98]">' +
+          'Voltar à lista' +
+        '</button>' +
+        '<button data-action="reverse" data-id="' + esc(tx.id) + '" ' +
+                'class="flex items-center justify-center gap-2 rounded-2xl bg-rose-600 py-3.5 text-sm font-semibold text-white transition hover:bg-rose-500 active:scale-[.98]">' +
+          '<i data-lucide="undo-2" class="h-4 w-4"></i>' + (isIncome ? 'Estornar depósito' : 'Estornar compra') +
+        '</button>' +
+      '</div>' +
+
+      '<p class="mt-3 text-center text-[11px] leading-relaxed text-slate-600">' +
+        'O estorno apaga o registro e devolve o valor ao saldo do mês.' +
+      '</p>';
+  };
+
+  const EmptyState = function (icon, title, text) {
+    return '' +
+      '<div class="flex flex-col items-center rounded-3xl border border-dashed border-blue-500/20 bg-nv-surface/60 px-6 py-10 text-center">' +
+        '<span class="flex h-12 w-12 items-center justify-center rounded-full bg-blue-500/10 text-nv-neon">' +
+          '<i data-lucide="' + esc(icon) + '" class="h-5 w-5"></i>' +
+        '</span>' +
+        '<p class="mt-4 text-sm font-semibold text-slate-200">' + esc(title) + '</p>' +
+        '<p class="mt-1 max-w-[16rem] text-sm leading-relaxed text-slate-500">' + esc(text) + '</p>' +
+      '</div>';
+  };
+
+  const MethodButton = function (id, active) {
+    const method = METHODS[id];
+    const base = 'flex items-center justify-center gap-2 rounded-2xl border px-3 py-3 text-sm font-medium transition active:scale-[.98] ';
+    const look = active
+      ? 'border-nv-active bg-nv-active/15 text-slate-100'
+      : 'border-blue-500/15 bg-nv-surface text-slate-400 hover:bg-blue-500/10';
+    return '' +
+      '<button type="button" data-action="select-method" data-method="' + esc(id) + '" aria-pressed="' + (active ? 'true' : 'false') + '" class="' + base + look + '">' +
+        '<i data-lucide="' + esc(method.icon) + '" class="h-4 w-4"></i>' + esc(method.label) +
+      '</button>';
+  };
+
+  const FilterChip = function (filter, active) {
+    const look = active
+      ? 'border-nv-active bg-gradient-to-r from-nv-cobalt to-nv-sapphire text-white'
+      : 'border-blue-500/15 bg-nv-surface text-slate-400 hover:bg-blue-500/10';
+    return '' +
+      '<button type="button" data-action="set-filter" data-filter="' + esc(filter.id) + '" ' +
+              'class="shrink-0 rounded-full border px-4 py-2 text-xs font-medium transition ' + look + '">' +
+        esc(filter.label) +
+      '</button>';
+  };
+
+  const Toast = function (toast) {
+    const style = TOAST_STYLES[toast.type] || TOAST_STYLES.info;
+    return '' +
+      '<div class="toast-enter pointer-events-auto flex items-center gap-3 rounded-2xl border ' + style.ring + ' bg-nv-raised px-4 py-3 shadow-lg">' +
+        '<i data-lucide="' + esc(style.icon) + '" class="h-4 w-4 shrink-0 ' + style.tone + '"></i>' +
+        '<p class="text-sm text-slate-100">' + esc(toast.message) + '</p>' +
+      '</div>';
+  };
+
+  /* ───────────────────────── 7. RENDERERS ───────────────────────── */
+
+  const renderRoute = function () {
+    ['home', 'statement', 'settings'].forEach(function (route) {
+      const view = $('#view-' + route);
+      if (view) view.classList.toggle('hidden', state.route !== route);
+    });
+    document.querySelectorAll('#bottom-nav .nav-item').forEach(function (btn) {
+      const active = btn.dataset.route === state.route;
+      btn.classList.toggle('text-nv-neon', active);
+      btn.classList.toggle('text-slate-500', !active);
+      btn.setAttribute('aria-current', active ? 'page' : 'false');
+    });
+    window.scrollTo(0, 0);
+  };
+
+  const renderHeader = function () {
+    const name = state.ownerName || 'você';
+    const hour = new Date().getHours();
+    const greeting = hour < 12 ? 'Bom dia,' : hour < 18 ? 'Boa tarde,' : 'Boa noite,';
+    $('#greeting').textContent = greeting;
+    $('#owner-name').textContent = name;
+    const initial = name.trim().charAt(0).toUpperCase() || 'A';
+    $('#avatar').textContent = initial;
+    $('#avatar-settings').textContent = initial;
+    const input = $('#name-input');
+    if (document.activeElement !== input) input.value = name;
+  };
+
+  const renderVisibilityControls = function () {
+    const icon = $('#visibility-icon');
+    if (icon) {
+      const next = state.balanceVisible ? 'eye' : 'eye-off';
+      if (icon.tagName.toLowerCase() === 'svg' || icon.getAttribute('data-lucide') !== next) {
+        const replacement = document.createElement('i');
+        replacement.id = 'visibility-icon';
+        replacement.className = 'h-5 w-5';
+        replacement.setAttribute('data-lucide', next);
+        icon.replaceWith(replacement);
+      }
+    }
+    const knob = $('#visibility-knob');
+    const track = $('#visibility-switch');
+    if (knob && track) {
+      knob.classList.toggle('translate-x-5', state.balanceVisible);
+      knob.classList.toggle('bg-white', state.balanceVisible);
+      track.classList.toggle('bg-nv-sapphire', state.balanceVisible);
+      track.classList.toggle('bg-slate-600/40', !state.balanceVisible);
+    }
+  };
+
+  const renderHero = function () {
+    const host = $('#hero-card');
+    if (state.loading) { host.innerHTML = HeroSkeleton(); return; }
+    host.innerHTML = HeroCard({ budget: budgetSnapshot(), hidden: !state.balanceVisible });
+    renderVisibilityControls();
+  };
+
+  const renderSummary = function () {
+    const container = $('#month-summary');
+    if (state.loading) { container.innerHTML = ''; return; }
+    const b = budgetSnapshot();
+    const hidden = !state.balanceVisible;
+    container.innerHTML =
+      SummaryTile({
+        icon: 'arrow-down-left', label: 'Entradas extras no mês', tone: 'text-emerald-500',
+        value: hidden ? MASK : formatCents(b.earned)
+      }) +
+      SummaryTile({
+        icon: 'wallet', label: 'Saldo em conta', tone: 'text-slate-100',
+        value: hidden ? MASK : formatCents(state.balance_cents)
+      });
+  };
+
+  const renderRecent = function () {
+    const list = $('#home-recent');
+    if (state.loading) {
+      list.innerHTML = '<li class="h-16 rounded-2xl skeleton"></li><li class="h-16 rounded-2xl skeleton"></li><li class="h-16 rounded-2xl skeleton"></li>';
+      return;
+    }
+    if (!state.transactions.length) {
+      list.innerHTML = '<li>' + EmptyState('wallet', 'Nenhuma movimentação ainda', 'Registre uma compra ou um depósito para o mês começar a contar.') + '</li>';
+      return;
+    }
+    const hidden = !state.balanceVisible;
+    list.innerHTML = state.transactions.slice(0, 3).map(function (tx) {
+      return TransactionRow(tx, { hidden: hidden, deletable: false });
+    }).join('');
+  };
+
+  const renderChips = function () {
+    const container = $('#filter-chips');
+    if (!container.childElementCount) {
+      container.innerHTML = FILTERS.map(function (f) { return FilterChip(f, f.id === state.filter); }).join('');
+      return;
+    }
+    container.querySelectorAll('[data-filter]').forEach(function (chip) {
+      const active = chip.dataset.filter === state.filter;
+      chip.classList.toggle('border-nv-active', active);
+      chip.classList.toggle('bg-gradient-to-r', active);
+      chip.classList.toggle('from-nv-cobalt', active);
+      chip.classList.toggle('to-nv-sapphire', active);
+      chip.classList.toggle('text-white', active);
+      chip.classList.toggle('border-blue-500/15', !active);
+      chip.classList.toggle('bg-nv-surface', !active);
+      chip.classList.toggle('text-slate-400', !active);
+    });
+  };
+
+  const renderStatement = function () {
+    const container = $('#statement-list');
+    const counter = $('#statement-count');
+
+    if (state.loading) {
+      container.innerHTML = '<div class="h-16 rounded-2xl skeleton"></div><div class="h-16 rounded-2xl skeleton"></div><div class="h-16 rounded-2xl skeleton"></div>';
+      counter.textContent = '';
+      return;
+    }
+
+    const rows = visibleTransactions();
+    counter.textContent = rows.length + (rows.length === 1 ? ' item' : ' itens');
+
+    if (!rows.length) {
+      container.innerHTML = state.transactions.length
+        ? EmptyState('search', 'Nada encontrado', 'Tente outro termo ou volte para o filtro Todos.')
+        : EmptyState('list', 'Extrato vazio', 'Assim que você registrar a primeira movimentação ela aparece aqui.');
+      return;
+    }
+
+    const hidden = !state.balanceVisible;
+    const groups = [];
+    const index = Object.create(null);
+    rows.forEach(function (tx) {
+      const key = startOfDay(tx.timestamp_ms);
+      if (!index[key]) { index[key] = { key: key, items: [] }; groups.push(index[key]); }
+      index[key].items.push(tx);
+    });
+
+    container.innerHTML = groups.map(function (group) {
+      let dayTotal = 0;
+      group.items.forEach(function (tx) {
+        dayTotal += tx.type === 'income' ? tx.amount_cents : -tx.amount_cents;
+      });
+      const totalLabel = hidden ? '' : formatCents(dayTotal, { signed: true });
+      return '' +
+        '<section>' +
+          '<div class="mb-2 flex items-baseline justify-between px-1">' +
+            '<h3 class="text-xs font-semibold text-slate-400">' + esc(dayLabel(group.key)) + '</h3>' +
+            '<span class="text-[11px] text-slate-600">' + esc(shortFormatter.format(new Date(group.key))) + (totalLabel ? ' \u00b7 ' + esc(totalLabel) : '') + '</span>' +
+          '</div>' +
+          '<ul class="space-y-2">' +
+            group.items.map(function (tx) { return TransactionRow(tx, { hidden: hidden, deletable: true }); }).join('') +
+          '</ul>' +
+        '</section>';
+    }).join('');
+  };
+
+  const renderSettings = function () {
+    $('#settings-count').textContent = state.loading ? '\u2014' : String(state.transactions.length);
+    $('#settings-income').textContent = state.loading ? '\u2014' : formatCents(state.monthlyIncomeCents);
+  };
+
+  const renderMethods = function () {
+    $('#method-buttons').innerHTML = PAYMENT_CHOICES.map(function (id) {
+      return MethodButton(id, state.draftMethod === id);
+    }).join('');
+    if (state.draftMethod) $('#method-error').classList.add('hidden');
+  };
+
+  const renderExpensePreview = function () {
+    const preview = $('#expense-preview');
+    if (!preview) return;
+    const cents = state.draftAmount;
+    if (!cents) { preview.textContent = ''; return; }
+    const b = budgetSnapshot();
+    const after = b.remaining - cents;
+    preview.textContent = after < 0
+      ? 'Essa compra estoura o teto do mês em ' + formatCents(Math.abs(after)) + '.'
+      : 'Depois dessa compra restam ' + formatCents(after) + ' no mês.';
+    preview.className = after < 0 ? 'mt-2 text-xs text-rose-400' : 'mt-2 text-xs text-slate-500';
+  };
+
+  const renderReceipt = function () {
+    const host = $('#receipt-body');
+    if (!state.receiptId) return;
+    const tx = findTransaction(state.receiptId);
+    if (!tx) {
+      host.innerHTML = EmptyState('search', 'Comprovante indisponível', 'Essa movimentação não está mais no extrato.');
+      return;
+    }
+    host.innerHTML = Receipt(tx);
+  };
+
+  const renderModal = function () {
+    ['expense', 'income', 'budget', 'receipt', 'confirm'].forEach(function (name) {
+      const open = state.modal === name;
+      const backdrop = document.querySelector('[data-sheet-backdrop="' + name + '"]');
+      const panel = document.querySelector('[data-sheet-panel="' + name + '"]');
+      if (backdrop) backdrop.classList.toggle('is-open', open);
+      if (panel) {
+        panel.classList.toggle('is-open', open);
+        panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+      }
+    });
+    document.body.style.overflow = state.modal ? 'hidden' : '';
+
+    if (state.modal === 'receipt') renderReceipt();
+
+    if (state.modal === 'confirm' && state.pendingDelete) {
+      const tx = findTransaction(state.pendingDelete);
+      $('#confirm-text').textContent = tx
+        ? 'A movimentação "' + tx.description + '" será apagada e ' + formatCents(tx.amount_cents) + ' voltam para o saldo do mês.'
+        : 'Esta movimentação será removida do extrato.';
+    }
+
+    if (state.modal === 'expense') setTimeout(function () { $('#expense-amount').focus(); }, 320);
+    if (state.modal === 'income') setTimeout(function () { $('#income-amount').focus(); }, 320);
+    if (state.modal === 'budget') setTimeout(function () { $('#budget-amount').focus(); }, 320);
+  };
+
+  const renderToasts = function () {
+    $('#toast-container').innerHTML = state.toasts.map(Toast).join('');
+  };
+
+  /* ───────────────────────── 8. ASSINATURAS ───────────────────────── */
+
+  store.subscribe(['route'], renderRoute);
+  store.subscribe(['ownerName'], renderHeader);
+  store.subscribe(['transactions', 'monthlyIncomeCents', 'balanceVisible', 'loading'], renderHero);
+  store.subscribe(['transactions', 'balance_cents', 'balanceVisible', 'loading'], renderSummary);
+  store.subscribe(['transactions', 'balanceVisible', 'loading'], renderRecent);
+  store.subscribe(['filter'], renderChips);
+  store.subscribe(['transactions', 'search', 'filter', 'balanceVisible', 'loading'], renderStatement);
+  store.subscribe(['transactions', 'monthlyIncomeCents', 'loading'], renderSettings);
+  store.subscribe(['draftMethod'], renderMethods);
+  store.subscribe(['draftAmount', 'transactions', 'monthlyIncomeCents'], renderExpensePreview);
+  store.subscribe(['receiptId', 'transactions', 'monthlyIncomeCents'], renderReceipt);
+  store.subscribe(['modal', 'pendingDelete'], renderModal);
+  store.subscribe(['toasts'], renderToasts);
+
+  /* ───────────────────────── 9. FORMULÁRIOS ───────────────────────── */
+
+  const fillSelect = function (select, options) {
+    select.innerHTML = options.map(function (option) {
+      return '<option value="' + esc(option.id) + '">' + esc(option.label) + '</option>';
+    }).join('');
+  };
+
+  const attachMoneyMask = function (input, onChange) {
+    input.addEventListener('input', function () {
+      const digits = input.value.replace(/\D/g, '').slice(0, 11);
+      const cents = digits ? parseInt(digits, 10) : 0;
+      input.dataset.cents = String(cents);
+      input.value = digits ? formatPlain(cents) : '';
+      if (onChange) onChange(cents);
+    });
+  };
+
+  const readCents = function (input) {
+    const cents = parseInt(input.dataset.cents || '0', 10);
+    return Number.isFinite(cents) ? cents : 0;
+  };
+
+  const setMoneyInput = function (input, cents) {
+    input.dataset.cents = String(cents);
+    input.value = cents ? formatPlain(cents) : '';
+  };
+
+  const resetExpenseForm = function () {
+    setMoneyInput($('#expense-amount'), 0);
+    $('#expense-description').value = '';
+    $('#expense-category').value = 'food';
+    $('#method-error').classList.add('hidden');
+    state.draftMethod = null;
+    state.draftAmount = 0;
+  };
+
+  const resetIncomeForm = function () {
+    setMoneyInput($('#income-amount'), 0);
+    $('#income-description').value = '';
+    $('#income-origin').value = 'pix_in';
+  };
+
+  const prepareBudgetForm = function () {
+    setMoneyInput($('#budget-amount'), state.monthlyIncomeCents);
+  };
+
+  /* ───────────────────────── 10. CASOS DE USO ───────────────────────── */
+
+  const reload = async function () {
+    const snapshot = await Database.snapshot();
+    state.balance_cents = snapshot.balance_cents;
+    state.monthlyIncomeCents = snapshot.monthly_income_cents;
+    state.ownerName = snapshot.owner_name;
+    state.transactions = snapshot.transactions;
+  };
+
+  const submitExpense = async function () {
+    const cents = readCents($('#expense-amount'));
+    if (cents <= 0) { showToast('Informe um valor maior que zero.', 'error'); $('#expense-amount').focus(); return; }
+    if (!state.draftMethod) { $('#method-error').classList.remove('hidden'); showToast('Escolha a forma de pagamento.', 'error'); return; }
+
+    const categoryId = $('#expense-category').value;
+    const typed = $('#expense-description').value.trim().slice(0, 60);
+    const payload = {
+      type: 'expense',
+      amount_cents: cents,
+      description: typed || categoryOf(categoryId).label,
+      category: categoryId,
+      payment_method: state.draftMethod,
+      timestamp_ms: Date.now()
+    };
+
+    try {
+      await Database.addTransaction(payload);
+      await reload();
+      state.modal = null;
+      resetExpenseForm();
+      const after = budgetSnapshot();
+      if (after.over) showToast('Compra registrada. Você passou do teto em ' + formatCents(Math.abs(after.remaining)) + '.', 'error');
+      else showToast('Compra registrada. Restam ' + formatCents(after.remaining) + ' no mês.', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Não foi possível salvar a compra. Tente de novo.', 'error');
+    }
+  };
+
+  const submitIncome = async function () {
+    const cents = readCents($('#income-amount'));
+    if (cents <= 0) { showToast('Informe um valor maior que zero.', 'error'); $('#income-amount').focus(); return; }
+
+    const originId = $('#income-origin').value;
+    const origin = INCOME_ORIGINS.find(function (o) { return o.id === originId; }) || INCOME_ORIGINS[1];
+    const typed = $('#income-description').value.trim().slice(0, 60);
+    const payload = {
+      type: 'income',
+      amount_cents: cents,
+      description: typed || origin.label,
+      category: origin.id,
+      payment_method: origin.method,
+      timestamp_ms: Date.now()
+    };
+
+    try {
+      await Database.addTransaction(payload);
+      await reload();
+      state.modal = null;
+      resetIncomeForm();
+      showToast('Depósito adicionado: ' + formatCents(cents) + '.', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Não foi possível salvar o depósito. Tente de novo.', 'error');
+    }
+  };
+
+  const removeTransaction = async function (id, closeReceipt) {
+    try {
+      const result = await Database.removeTransaction(id);
+      await reload();
+      state.modal = null;
+      state.pendingDelete = null;
+      if (closeReceipt) state.receiptId = null;
+      const b = budgetSnapshot();
+      const value = formatCents(result.transaction.amount_cents);
+      showToast(result.transaction.type === 'income'
+        ? 'Depósito estornado: ' + value + '.'
+        : 'Compra estornada. ' + value + ' voltaram para o mês.', 'success');
+      if (b.over) showToast('Mesmo assim o mês segue acima do teto.', 'info');
+    } catch (err) {
+      console.error(err);
+      showToast('Não foi possível estornar agora.', 'error');
+    }
+  };
+
+  const saveBudget = async function () {
+    const cents = readCents($('#budget-amount'));
+    if (cents <= 0) { showToast('Informe uma renda maior que zero.', 'error'); $('#budget-amount').focus(); return; }
+    try {
+      await Database.saveIncome(cents);
+      state.monthlyIncomeCents = cents;
+      state.modal = null;
+      showToast('Renda mensal definida em ' + formatCents(cents) + '.', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Não foi possível salvar a renda mensal.', 'error');
+    }
+  };
+
+  const saveName = async function () {
+    const name = $('#name-input').value.trim().slice(0, 24);
+    if (!name) { showToast('Escreva um nome para salvar.', 'error'); return; }
+    try {
+      await Database.renameOwner(name);
+      state.ownerName = name;
+      showToast('Nome salvo.', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Não foi possível salvar o nome.', 'error');
+    }
+  };
+
+  const copyData = async function () {
+    const payload = JSON.stringify({
+      monthly_income_cents: state.monthlyIncomeCents,
+      balance_cents: state.balance_cents,
+      owner_name: state.ownerName,
+      transactions: state.transactions
+    }, null, 2);
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('clipboard indisponível');
+      await navigator.clipboard.writeText(payload);
+      showToast('Extrato copiado para a área de transferência.', 'success');
+    } catch (err) {
+      console.warn(err);
+      showToast('Seu navegador bloqueou a cópia automática.', 'error');
+    }
+  };
+
+  const resetData = async function () {
+    try {
+      await Database.reset();
+      await reload();
+      state.search = '';
+      state.filter = 'all';
+      state.receiptId = null;
+      $('#search-input').value = '';
+      showToast('Conta restaurada com os dados de exemplo.', 'success');
+    } catch (err) {
+      console.error(err);
+      showToast('Não foi possível restaurar os dados.', 'error');
+    }
+  };
+
+  const closeSheets = function () {
+    state.modal = null;
+    state.pendingDelete = null;
+  };
+
+  /* ───────────────────────── 11. DELEGAÇÃO DE EVENTOS ───────────────────────── */
+
+  const handleAction = function (trigger) {
+    const action = trigger.dataset.action;
+
+    switch (action) {
+      case 'nav':
+        state.route = trigger.dataset.route;
+        break;
+      case 'toggle-balance':
+        state.balanceVisible = !state.balanceVisible;
+        break;
+      case 'open-modal': {
+        const name = trigger.dataset.modal;
+        if (name === 'expense') resetExpenseForm();
+        if (name === 'income') resetIncomeForm();
+        if (name === 'budget') prepareBudgetForm();
+        state.modal = name;
+        break;
+      }
+      case 'close-modal':
+        closeSheets();
+        break;
+      case 'open-receipt':
+        state.receiptId = parseInt(trigger.dataset.id, 10);
+        state.modal = 'receipt';
+        break;
+      case 'reverse':
+        removeTransaction(parseInt(trigger.dataset.id, 10), true);
+        break;
+      case 'select-method':
+        state.draftMethod = trigger.dataset.method;
+        break;
+      case 'set-filter':
+        state.filter = trigger.dataset.filter;
+        break;
+      case 'clear-search':
+        $('#search-input').value = '';
+        state.search = '';
+        break;
+      case 'ask-delete':
+        state.pendingDelete = parseInt(trigger.dataset.id, 10);
+        state.modal = 'confirm';
+        break;
+      case 'confirm-delete':
+        if (state.pendingDelete) removeTransaction(state.pendingDelete, false);
+        else closeSheets();
+        break;
+      case 'submit-expense':
+        submitExpense();
+        break;
+      case 'submit-income':
+        submitIncome();
+        break;
+      case 'save-budget':
+        saveBudget();
+        break;
+      case 'save-name':
+        saveName();
+        break;
+      case 'copy-data':
+        copyData();
+        break;
+      case 'reset-data':
+        resetData();
+        break;
+      default:
+        break;
+    }
+  };
+
+  document.addEventListener('click', function (event) {
+    const trigger = event.target.closest('[data-action]');
+    if (trigger) handleAction(trigger);
+  });
+
+  document.addEventListener('keydown', function (event) {
+    if (event.key === 'Escape' && state.modal) { closeSheets(); return; }
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    const trigger = event.target.closest('[data-action][role="button"]');
+    if (!trigger) return;
+    event.preventDefault();
+    handleAction(trigger);
+  });
+
+  document.querySelectorAll('[data-sheet-backdrop]').forEach(function (backdrop) {
+    backdrop.addEventListener('click', closeSheets);
+  });
+
+  let searchTimer = null;
+  $('#search-input').addEventListener('input', function (event) {
+    const value = event.target.value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(function () { state.search = value; }, 110);
+  });
+
+  $('#name-input').addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') saveName();
+  });
+
+  $('#budget-amount').addEventListener('keydown', function (event) {
+    if (event.key === 'Enter') saveBudget();
+  });
+
+  /* ───────────────────────── 12. BOOTSTRAP ───────────────────────── */
+
+  const boot = async function () {
+    fillSelect($('#expense-category'), EXPENSE_CATEGORIES);
+    fillSelect($('#income-origin'), INCOME_ORIGINS);
+    $('#expense-category').value = 'food';
+    $('#income-origin').value = 'pix_in';
+
+    attachMoneyMask($('#expense-amount'), function (cents) { state.draftAmount = cents; });
+    attachMoneyMask($('#income-amount'));
+    attachMoneyMask($('#budget-amount'));
+
+    store.renderAll();
+
+    try {
+      await Database.bootstrap();
+      await reload();
+      state.loading = false;
+    } catch (err) {
+      console.error(err);
+      state.loading = false;
+      showToast('Não foi possível abrir o banco local do navegador.', 'error');
+    }
+  };
+
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
+  else boot();
+})();
+</script>
+</body>
+</html>
