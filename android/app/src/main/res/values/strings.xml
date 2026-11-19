@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MyBuy</string>
+    <string name="title_activity_main">MyBuy</string>
+    <string name="package_name">com.amancio.mybuy</string>
+    <string name="custom_url_scheme">com.amancio.mybuy</string>
+</resources>
